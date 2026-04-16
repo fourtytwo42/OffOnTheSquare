@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-cinzel: var(--font-cinzel);
+  --color-vault-black: #050505;
+  --color-vault-charcoal: #121212;
+  --color-vault-crimson: #7a0b0b;
+  --color-vault-crimson-bright: #b31212;
+  --color-vault-gold: #d4af37;
+  --color-vault-parchment: #e8dcc8;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-[color:var(--color-vault-black)] text-[color:var(--color-vault-parchment)] antialiased;
+  background-image:
+    radial-gradient(ellipse 120% 80% at 50% 0%, #1a1a1a 0%, #0a0a0a 42%, #000000 100%);
+  background-attachment: fixed;
+}
+
+.vault-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem 2.75rem;
+  min-width: min(92vw, 18rem);
+  color: #fbe8c8;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 0.35rem;
+  border: 2px solid rgba(212, 175, 55, 0.65);
+  background: linear-gradient(
+    180deg,
+    #9a1212 0%,
+    #6a0707 45%,
+    #3f0303 100%
+  );
+  box-shadow:
+    0 10px 0 #3f0000,
+    0 18px 32px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 200, 120, 0.35);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.vault-button:disabled {
+  opacity: 0.85;
+  cursor: default;
+}
+
+.vault-button:not(:disabled):hover {
+  filter: brightness(1.06);
+}

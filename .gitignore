@@ -1,0 +1,32 @@
+# Dependencies
+**/node_modules/
+
+# Next.js
+storefront/.next/
+storefront/out/
+
+# Medusa / backend
+backend/dist/
+backend/build/
+backend/.cache/
+backend/.medusa/
+backend/uploads/
+backend/medusa-db.sql
+
+# Env & secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# OS & tooling
+.DS_Store
+**/*.tsbuildinfo
+.idea/
+.vscode/
+
+# Logs & debug
+*.log
+pnpm-debug.log*
+
+# Vercel
+.vercel/
