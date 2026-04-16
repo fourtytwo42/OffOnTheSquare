@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 
@@ -24,8 +25,29 @@ type PreviewProduct = {
 
 const bookEase = [0.22, 1, 0.36, 1] as const;
 
+const VAULT_PAGE_FLIP_DURATION = 0.52;
+
 /** Cover open motion is ~1.15s; show catalogue once the flip is far enough along (was 1180ms — too slow for UX). */
 const VAULT_CATALOGUE_REVEAL_MS = 720;
+
+/** Viewports below `md` (768px): spread 2+ hides cards on the left leaf; nine slots + nav stay on the right half only. */
+const VAULT_CATALOGUE_NARROW_MQ = "(max-width: 767px)";
+
+function useNarrowVaultCatalogue(): boolean {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia(VAULT_CATALOGUE_NARROW_MQ).matches
+      : false,
+  );
+  useLayoutEffect(() => {
+    const mq = window.matchMedia(VAULT_CATALOGUE_NARROW_MQ);
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return narrow;
+}
 
 /** Match book shell perspective; inner cover is ~rotateY(-158°) — portaled UI tilts from the spine to sit on the cream. */
 const LEFT_PORTAL_PERSPECTIVE = 1120;
@@ -48,17 +70,35 @@ const bfHidden = {
   WebkitBackfaceVisibility: "hidden" as const,
 };
 
-/** First spread: 6 items on right leaf only; later spreads 6 + 6 on both leaves. */
-const FIRST_RIGHT = 6;
-const PER_SPREAD = 12;
+/** 3×3 “binder page” slots per leaf (magic-card-sized tiles). */
+const SLOTS_PER_PAGE = 9;
+/** First spread: right leaf only (left is Close). */
+const FIRST_RIGHT = SLOTS_PER_PAGE;
+/** Facing spreads: 9 + 9 listings per spread. */
+const PER_SPREAD = SLOTS_PER_PAGE * 2;
+
+/** Minimum demo catalogue length (multiples of full spreads after page 1). */
+const MIN_CATALOG_LEN = FIRST_RIGHT + 3 * PER_SPREAD;
 
 /** Single parchment layer (never nest two of these — the outer shows as a “ghost” margin). */
 const vaultParchment =
   "border border-[#c4b8a4]/85 bg-gradient-to-br from-[#faf6f0] via-[#f0e9df] to-[#e6ddd0] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]";
 
-/** Flat spread grid (both leaves use this — no 3D parent). */
-const spreadProductGrid =
-  "grid min-h-0 min-w-0 h-full w-full auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-[repeat(3,minmax(0,1fr))] sm:gap-3";
+/** White insert on the parchment leaf (binder “sheet”). */
+const binderPageShelf =
+  "flex min-h-0 min-w-0 w-full flex-1 flex-col rounded-[4px] bg-white p-[2px] shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] sm:p-[3px]";
+
+/** 9-pocket grid: gap shows soft gray “slot seams” between cards. */
+const binderPageGrid =
+  "grid min-h-0 min-w-0 h-full w-full grid-cols-3 grid-rows-3 gap-[2px] rounded-[2px] bg-[#d4d2cf] sm:gap-[3px]";
+
+function BinderNineGrid({ children }: { children: ReactNode }) {
+  return (
+    <div className={binderPageShelf}>
+      <div className={`${binderPageGrid} min-h-0 min-w-0 flex-1`}>{children}</div>
+    </div>
+  );
+}
 
 const DEMO_TITLES = [
   "Sealed wax assortment",
@@ -98,7 +138,7 @@ function buildCatalog(real: PreviewProduct[]): PreviewProduct[] {
   const out: PreviewProduct[] = [...real];
   const handles = new Set(out.map((p) => p.handle));
   let n = 0;
-  while (out.length < 42) {
+  while (out.length < MIN_CATALOG_LEN) {
     const handle = `vault-demo-${n}`;
     if (!handles.has(handle)) {
       handles.add(handle);
@@ -128,9 +168,13 @@ function sliceSpread(
   }
   const offset = FIRST_RIGHT + (spreadIndex - 1) * PER_SPREAD;
   return {
-    left: catalog.slice(offset, offset + 6),
-    right: catalog.slice(offset + 6, offset + 12),
+    left: catalog.slice(offset, offset + SLOTS_PER_PAGE),
+    right: catalog.slice(offset + SLOTS_PER_PAGE, offset + PER_SPREAD),
   };
+}
+
+function nineSlots(products: PreviewProduct[]): (PreviewProduct | null)[] {
+  return Array.from({ length: SLOTS_PER_PAGE }, (_, i) => products[i] ?? null);
 }
 
 /** Book page numbers shown in the footer (spread 0 = page 1 only; later = two facing pages). */
@@ -138,6 +182,16 @@ function spreadPageLabel(spreadIndex: number): string {
   if (spreadIndex === 0) return "Page 1";
   const start = 2 + (spreadIndex - 1) * 2;
   return `Pages ${start}–${start + 1}`;
+}
+
+/** Empty 9-pocket slot (perforated binder look). */
+function BinderEmptySlot() {
+  return (
+    <div
+      aria-hidden
+      className="h-full min-h-0 w-full min-w-0 rounded-[5px] border border-dashed border-zinc-400/70 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,1),inset_0_-1px_0_rgba(0,0,0,0.06)]"
+    />
+  );
 }
 
 function PlaceholderThumb({ seed }: { seed: string }) {
@@ -152,60 +206,215 @@ function PlaceholderThumb({ seed }: { seed: string }) {
   );
 }
 
+type CatalogueView = {
+  spreadIndex: number;
+  mobileFacingLeaf: "L" | "R";
+};
+
+type CatalogueTurnState = {
+  direction: "forward" | "backward";
+  pane: "left" | "right";
+  fromView: CatalogueView;
+  toView: CatalogueView;
+};
+
+function normalizeCatalogueView(
+  view: CatalogueView,
+  narrowCatalogue: boolean,
+): CatalogueView {
+  if (narrowCatalogue) return view;
+  return { spreadIndex: view.spreadIndex, mobileFacingLeaf: "L" };
+}
+
+function getNextView(
+  view: CatalogueView,
+  narrowCatalogue: boolean,
+  spreads: number,
+): CatalogueView | null {
+  const current = normalizeCatalogueView(view, narrowCatalogue);
+  if (!narrowCatalogue) {
+    if (current.spreadIndex >= spreads - 1) return null;
+    return { spreadIndex: current.spreadIndex + 1, mobileFacingLeaf: "L" };
+  }
+  if (current.spreadIndex === 0) {
+    if (spreads <= 1) return null;
+    return { spreadIndex: 1, mobileFacingLeaf: "L" };
+  }
+  if (current.mobileFacingLeaf === "L") {
+    return { ...current, mobileFacingLeaf: "R" };
+  }
+  if (current.spreadIndex >= spreads - 1) return null;
+  return { spreadIndex: current.spreadIndex + 1, mobileFacingLeaf: "L" };
+}
+
+function getPrevView(
+  view: CatalogueView,
+  narrowCatalogue: boolean,
+): CatalogueView | null {
+  const current = normalizeCatalogueView(view, narrowCatalogue);
+  if (!narrowCatalogue) {
+    if (current.spreadIndex <= 0) return null;
+    return { spreadIndex: current.spreadIndex - 1, mobileFacingLeaf: "L" };
+  }
+  if (current.spreadIndex === 0) return null;
+  if (current.mobileFacingLeaf === "R") {
+    return { ...current, mobileFacingLeaf: "L" };
+  }
+  if (current.spreadIndex === 1) {
+    return { spreadIndex: 0, mobileFacingLeaf: "L" };
+  }
+  return { spreadIndex: current.spreadIndex - 1, mobileFacingLeaf: "R" };
+}
+
+function getPaneLayout(portalWidth: number) {
+  const leftW = Math.max(0, Math.floor(portalWidth / 2));
+  const rightW = Math.max(0, portalWidth - leftW);
+  return {
+    leftW,
+    rightW,
+    leftPane: {
+      position: "absolute",
+      left: 0,
+      top: 0,
+      bottom: 0,
+      width: leftW,
+      boxSizing: "border-box",
+    } satisfies CSSProperties,
+    rightPane: {
+      position: "absolute",
+      left: leftW,
+      top: 0,
+      bottom: 0,
+      width: rightW,
+      boxSizing: "border-box",
+    } satisfies CSSProperties,
+  };
+}
+
+function getLeftLeafRestStyle(
+  reduceMotion: boolean,
+): CSSProperties | undefined {
+  if (reduceMotion) return undefined;
+  return {
+    transform: getLeftLeafRestTransform(),
+    transformOrigin: "right center",
+    transformStyle: "preserve-3d",
+    willChange: "transform",
+  };
+}
+
+function getRightLeafRestStyle(
+  reduceMotion: boolean,
+): CSSProperties | undefined {
+  if (reduceMotion) return undefined;
+  return {
+    transform: getRightLeafRestTransform(),
+    willChange: "transform",
+  };
+}
+
+function getLeftLeafRestTransform(): string {
+  return `perspective(${LEFT_PORTAL_PERSPECTIVE}px) rotateY(${LEFT_PORTAL_ROTATE_Y}deg) translateX(${LEFT_PORTAL_TRANSLATE_X}px) scaleX(${LEFT_PORTAL_SCALE_X}) scaleY(${LEFT_PORTAL_SCALE_Y})`;
+}
+
+function getRightLeafRestTransform(): string {
+  return `perspective(${LEFT_PORTAL_PERSPECTIVE}px) rotateY(0deg) translateX(${RIGHT_PORTAL_TRANSLATE_X}px) scaleX(1) scaleY(1)`;
+}
+
+function CatalogueProductPage({
+  products,
+  vaultParchment,
+  pageKey,
+}: {
+  products: PreviewProduct[];
+  vaultParchment: string;
+  pageKey: string;
+}) {
+  return (
+    <div
+      key={pageKey}
+      data-vault-page-surface={pageKey}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-sm p-2 ${vaultParchment}`}
+    >
+      <BinderNineGrid>
+        {nineSlots(products).map((p, i) =>
+          p ? (
+            <ProductTile key={p.id} p={p} />
+          ) : (
+            <BinderEmptySlot key={`${pageKey}-empty-${i}`} />
+          ),
+        )}
+      </BinderNineGrid>
+    </div>
+  );
+}
+
+function CatalogueBlankPage({
+  vaultParchment,
+  pageKey,
+}: {
+  vaultParchment: string;
+  pageKey: string;
+}) {
+  return (
+    <div
+      key={pageKey}
+      data-vault-page-surface={pageKey}
+      className={`flex min-h-0 min-w-0 w-full flex-1 flex-col rounded-sm p-2 ${vaultParchment}`}
+      aria-hidden
+    />
+  );
+}
+
+function getRightLeafProducts(
+  view: CatalogueView,
+  spread: { left: PreviewProduct[]; right: PreviewProduct[] },
+  narrowCatalogue: boolean,
+): PreviewProduct[] {
+  if (view.spreadIndex === 0) return spread.right;
+  if (!narrowCatalogue) return spread.right;
+  return view.mobileFacingLeaf === "L" ? spread.left : spread.right;
+}
+
+function getTurnState(
+  direction: "forward" | "backward",
+  fromView: CatalogueView,
+  toView: CatalogueView,
+  narrowCatalogue: boolean,
+): CatalogueTurnState {
+  if (narrowCatalogue || direction === "forward") {
+    return { direction, pane: "right", fromView, toView };
+  }
+  return { direction, pane: "left", fromView, toView };
+}
+
 /** Page 1: two-page-wide portal; Close sits on the physical left leaf (same half as spread 2+). */
 function FirstSpreadCatalogue({
   portalWidth,
   spread,
   vaultParchment,
-  spreadProductGrid,
   spreadPageLabel,
   goNext,
   closeVault,
   spreads,
   reduceMotion,
+  narrowCatalogue,
+  controlsDisabled,
 }: {
   portalWidth: number;
   spread: { left: PreviewProduct[]; right: PreviewProduct[] };
   vaultParchment: string;
-  spreadProductGrid: string;
   spreadPageLabel: (i: number) => string;
   goNext: () => void;
   closeVault: () => void;
   spreads: number;
   reduceMotion: boolean;
+  narrowCatalogue: boolean;
+  controlsDisabled: boolean;
 }) {
-  const leftW = Math.max(0, Math.floor(portalWidth / 2));
-  const rightW = Math.max(0, portalWidth - leftW);
-  const leftPane: CSSProperties = {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: leftW,
-    boxSizing: "border-box",
-  };
-  const rightPane: CSSProperties = {
-    position: "absolute",
-    left: leftW,
-    top: 0,
-    bottom: 0,
-    width: rightW,
-    boxSizing: "border-box",
-  };
-  const leftTiltStyle: CSSProperties | undefined = reduceMotion
-    ? undefined
-    : {
-        transform: `perspective(${LEFT_PORTAL_PERSPECTIVE}px) rotateY(${LEFT_PORTAL_ROTATE_Y}deg) translateX(${LEFT_PORTAL_TRANSLATE_X}px) scaleX(${LEFT_PORTAL_SCALE_X}) scaleY(${LEFT_PORTAL_SCALE_Y})`,
-        transformOrigin: "right center",
-        transformStyle: "preserve-3d",
-        willChange: "transform",
-      };
-  const rightSpineNudgeStyle: CSSProperties | undefined = reduceMotion
-    ? undefined
-    : {
-        transform: `translateX(${RIGHT_PORTAL_TRANSLATE_X}px)`,
-        willChange: "transform",
-      };
+  const { leftPane, rightPane } = getPaneLayout(portalWidth);
+  const leftTiltStyle = getLeftLeafRestStyle(reduceMotion);
+  const rightSpineNudgeStyle = getRightLeafRestStyle(reduceMotion);
   return (
     <div
       data-vault-first-spread
@@ -221,17 +430,25 @@ function FirstSpreadCatalogue({
           className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col"
           style={leftTiltStyle}
         >
-          <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col justify-end gap-1.5">
-            <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={closeVault}
-                className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
-              >
-                Close
-              </button>
+          {narrowCatalogue ? (
+            <CatalogueBlankPage
+              vaultParchment={vaultParchment}
+              pageKey="first-left-blank"
+            />
+          ) : (
+            <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col justify-end gap-1.5">
+              <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={closeVault}
+                  disabled={controlsDisabled}
+                  className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
       <div
@@ -243,25 +460,29 @@ function FirstSpreadCatalogue({
           className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
           style={rightSpineNudgeStyle}
         >
-          <div
-            key="R-0"
-            data-vault-right-page
-            className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-sm p-2 ${vaultParchment}`}
-          >
-            <div className={`${spreadProductGrid} min-h-0 min-w-0 flex-1`}>
-              {spread.right.map((p) => (
-                <ProductTile key={p.id} p={p} />
-              ))}
-            </div>
-          </div>
-          <div className="flex w-full shrink-0 items-center justify-center gap-2">
+          <CatalogueProductPage
+            products={spread.right}
+            vaultParchment={vaultParchment}
+            pageKey="first-right"
+          />
+          <div className="flex w-full shrink-0 flex-wrap items-center justify-center gap-2">
+            {narrowCatalogue ? (
+              <button
+                type="button"
+                onClick={closeVault}
+                disabled={controlsDisabled}
+                className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+              >
+                Close
+              </button>
+            ) : null}
             <span className="text-[10px] tabular-nums text-[#3d3528] sm:text-xs">
               {spreadPageLabel(0)}
             </span>
             <button
               type="button"
               onClick={goNext}
-              disabled={spreads <= 1}
+              disabled={controlsDisabled || spreads <= 1}
               className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 disabled:cursor-not-allowed disabled:opacity-35 sm:text-xs"
             >
               Next
@@ -276,61 +497,35 @@ function FirstSpreadCatalogue({
 
 function FacingCatalogueSpread({
   portalWidth,
-  spreadIndex,
+  view,
   spread,
   vaultParchment,
-  spreadProductGrid,
   spreadPageLabel,
   goPrev,
   goNext,
   closeVault,
   spreads,
   reduceMotion,
+  narrowCatalogue,
+  controlsDisabled,
 }: {
   portalWidth: number;
-  spreadIndex: number;
+  view: CatalogueView;
   spread: { left: PreviewProduct[]; right: PreviewProduct[] };
   vaultParchment: string;
-  spreadProductGrid: string;
   spreadPageLabel: (i: number) => string;
   goPrev: () => void;
   goNext: () => void;
   closeVault: () => void;
   spreads: number;
   reduceMotion: boolean;
+  narrowCatalogue: boolean;
+  controlsDisabled: boolean;
 }) {
-  const leftW = Math.max(0, Math.floor(portalWidth / 2));
-  const rightW = Math.max(0, portalWidth - leftW);
-  const leftPane: CSSProperties = {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: leftW,
-    boxSizing: "border-box",
-  };
-  const rightPane: CSSProperties = {
-    position: "absolute",
-    left: leftW,
-    top: 0,
-    bottom: 0,
-    width: rightW,
-    boxSizing: "border-box",
-  };
-  const leftTiltStyle: CSSProperties | undefined = reduceMotion
-    ? undefined
-    : {
-        transform: `perspective(${LEFT_PORTAL_PERSPECTIVE}px) rotateY(${LEFT_PORTAL_ROTATE_Y}deg) translateX(${LEFT_PORTAL_TRANSLATE_X}px) scaleX(${LEFT_PORTAL_SCALE_X}) scaleY(${LEFT_PORTAL_SCALE_Y})`,
-        transformOrigin: "right center",
-        transformStyle: "preserve-3d",
-        willChange: "transform",
-      };
-  const rightSpineNudgeStyle: CSSProperties | undefined = reduceMotion
-    ? undefined
-    : {
-        transform: `translateX(${RIGHT_PORTAL_TRANSLATE_X}px)`,
-        willChange: "transform",
-      };
+  const { leftPane, rightPane } = getPaneLayout(portalWidth);
+  const leftTiltStyle = getLeftLeafRestStyle(reduceMotion);
+  const rightSpineNudgeStyle = getRightLeafRestStyle(reduceMotion);
+  const rightProducts = getRightLeafProducts(view, spread, narrowCatalogue);
   return (
     <div
       data-vault-facing-split
@@ -346,40 +541,45 @@ function FacingCatalogueSpread({
           className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col"
           style={leftTiltStyle}
         >
-          <div
-            key={`L-${spreadIndex}`}
-            data-vault-left-page
-            className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
-          >
-            <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-1.5">
-              <div
-                className={`min-h-0 w-full min-w-0 flex-1 self-stretch rounded-sm p-2 ${vaultParchment}`}
-              >
-                <div className={`${spreadProductGrid} w-full min-w-0`}>
-                  {spread.left.map((p) => (
-                    <ProductTile key={p.id} p={p} />
-                  ))}
+          {narrowCatalogue ? (
+            <CatalogueBlankPage
+              vaultParchment={vaultParchment}
+              pageKey={`left-blank-${view.spreadIndex}`}
+            />
+          ) : (
+            <div
+              key={`L-${view.spreadIndex}`}
+              data-vault-left-page
+              className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
+            >
+              <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-1.5">
+                <CatalogueProductPage
+                  products={spread.left}
+                  vaultParchment={vaultParchment}
+                  pageKey={`left-${view.spreadIndex}`}
+                />
+                <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    disabled={controlsDisabled}
+                    className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeVault}
+                    disabled={controlsDisabled}
+                    className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={goPrev}
-                  className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={closeVault}
-                  className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
-                >
-                  Close
-                </button>
-              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
       <div
@@ -391,25 +591,46 @@ function FacingCatalogueSpread({
           className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
           style={rightSpineNudgeStyle}
         >
-          <div
-            key={`R-${spreadIndex}`}
-            data-vault-right-page
-            className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-sm p-2 ${vaultParchment}`}
-          >
-            <div className={`${spreadProductGrid} min-h-0 min-w-0 flex-1`}>
-              {spread.right.map((p) => (
-                <ProductTile key={p.id} p={p} />
-              ))}
-            </div>
-          </div>
-          <div className="flex w-full shrink-0 items-center justify-center gap-2">
+          <CatalogueProductPage
+            products={rightProducts}
+            vaultParchment={vaultParchment}
+            pageKey={`right-${view.spreadIndex}-${narrowCatalogue ? view.mobileFacingLeaf : "wide"}`}
+          />
+          <div className="flex w-full shrink-0 flex-wrap items-center justify-center gap-2">
+            {narrowCatalogue ? (
+              <>
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  disabled={controlsDisabled}
+                  className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={closeVault}
+                  disabled={controlsDisabled}
+                  className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                >
+                  Close
+                </button>
+              </>
+            ) : null}
             <span className="text-[10px] tabular-nums text-[#3d3528] sm:text-xs">
-              {spreadPageLabel(spreadIndex)}
+              {spreadPageLabel(view.spreadIndex)}
             </span>
             <button
               type="button"
               onClick={goNext}
-              disabled={spreadIndex >= spreads - 1}
+              disabled={
+                controlsDisabled ||
+                (narrowCatalogue
+                  ? view.spreadIndex >= spreads - 1 &&
+                    view.mobileFacingLeaf === "R"
+                  : view.spreadIndex >= spreads - 1)
+              }
               className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 disabled:cursor-not-allowed disabled:opacity-35 sm:text-xs"
             >
               Next
@@ -422,21 +643,217 @@ function FacingCatalogueSpread({
   );
 }
 
+function VaultCatalogueSpread({
+  view,
+  catalog,
+  portalWidth,
+  vaultParchment,
+  spreadPageLabel,
+  goNextCatalogue,
+  goPrevCatalogue,
+  closeVault,
+  spreads,
+  reduceMotion,
+  narrowCatalogue,
+  controlsDisabled,
+}: {
+  view: CatalogueView;
+  catalog: PreviewProduct[];
+  portalWidth: number;
+  vaultParchment: string;
+  spreadPageLabel: (i: number) => string;
+  goNextCatalogue: () => void;
+  goPrevCatalogue: () => void;
+  closeVault: () => void;
+  spreads: number;
+  reduceMotion: boolean;
+  narrowCatalogue: boolean;
+  controlsDisabled: boolean;
+}) {
+  const spread = sliceSpread(catalog, view.spreadIndex);
+  if (view.spreadIndex === 0) {
+    return (
+      <FirstSpreadCatalogue
+        portalWidth={portalWidth}
+        spread={spread}
+        vaultParchment={vaultParchment}
+        spreadPageLabel={spreadPageLabel}
+        goNext={goNextCatalogue}
+        closeVault={closeVault}
+        spreads={spreads}
+        reduceMotion={reduceMotion}
+        narrowCatalogue={narrowCatalogue}
+        controlsDisabled={controlsDisabled}
+      />
+    );
+  }
+  return (
+    <FacingCatalogueSpread
+      portalWidth={portalWidth}
+      view={view}
+      spread={spread}
+      vaultParchment={vaultParchment}
+      spreadPageLabel={spreadPageLabel}
+      goPrev={goPrevCatalogue}
+      goNext={goNextCatalogue}
+      closeVault={closeVault}
+      spreads={spreads}
+      reduceMotion={reduceMotion}
+      narrowCatalogue={narrowCatalogue}
+      controlsDisabled={controlsDisabled}
+    />
+  );
+}
+
+function TurningLeafOverlay({
+  turnState,
+  catalog,
+  portalWidth,
+  vaultParchment,
+  narrowCatalogue,
+  onAnimationComplete,
+}: {
+  turnState: CatalogueTurnState;
+  catalog: PreviewProduct[];
+  portalWidth: number;
+  vaultParchment: string;
+  narrowCatalogue: boolean;
+  onAnimationComplete: () => void;
+}) {
+  const { leftPane, rightPane } = getPaneLayout(portalWidth);
+  const fromSpread = sliceSpread(catalog, turnState.fromView.spreadIndex);
+  const toSpread = sliceSpread(catalog, turnState.toView.spreadIndex);
+  const frontProducts =
+    turnState.pane === "right"
+      ? getRightLeafProducts(turnState.fromView, fromSpread, narrowCatalogue)
+      : fromSpread.left;
+  const backProducts =
+    turnState.pane === "right"
+      ? getRightLeafProducts(turnState.toView, toSpread, narrowCatalogue)
+      : toSpread.right;
+  const outgoingPane = turnState.pane;
+  const incomingPane = narrowCatalogue
+    ? "right"
+    : turnState.pane === "right"
+      ? "left"
+      : "right";
+  const outgoingPaneStyle = outgoingPane === "right" ? rightPane : leftPane;
+  const incomingPaneStyle = incomingPane === "right" ? rightPane : leftPane;
+  const outgoingShellClass =
+    outgoingPane === "right"
+      ? "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
+      : "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5";
+  const incomingShellClass =
+    incomingPane === "right"
+      ? "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
+      : "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5";
+  const outgoingInnerTransform =
+    !narrowCatalogue && outgoingPane === "left"
+      ? getLeftLeafRestTransform()
+      : getRightLeafRestTransform();
+  const incomingInnerTransform =
+    !narrowCatalogue && incomingPane === "left"
+      ? getLeftLeafRestTransform()
+      : getRightLeafRestTransform();
+  const outgoingRotateY =
+    outgoingPane === "right"
+      ? turnState.direction === "forward"
+        ? -108
+        : 108
+      : turnState.direction === "backward"
+        ? 108
+        : -108;
+  const incomingStartRotateY =
+    incomingPane === "left"
+      ? -108
+      : 108;
+  const incomingOpacity = narrowCatalogue ? [0.72, 1] : [0.8, 1];
+  return (
+    <>
+      <motion.div
+        className={outgoingShellClass}
+        style={{
+          ...outgoingPaneStyle,
+          transformOrigin:
+            outgoingPane === "right" ? "left center" : "right center",
+          transformStyle: "preserve-3d",
+          zIndex: 13,
+          pointerEvents: "none",
+          willChange: "transform, opacity",
+        }}
+        initial={{ rotateY: 0, opacity: 1 }}
+        animate={{ rotateY: outgoingRotateY, opacity: 0.92 }}
+        transition={{ duration: VAULT_PAGE_FLIP_DURATION, ease: bookEase }}
+      >
+        <div
+          className="relative flex h-full min-h-0 min-w-0 flex-1"
+          style={{
+            transform: outgoingInnerTransform,
+            transformStyle: "preserve-3d",
+            willChange: "transform",
+          }}
+        >
+          <div className="absolute inset-0 flex min-h-0 min-w-0" style={bfHidden}>
+            <CatalogueProductPage
+              products={frontProducts}
+              vaultParchment={vaultParchment}
+              pageKey={`turn-front-${turnState.fromView.spreadIndex}-${turnState.fromView.mobileFacingLeaf}-${outgoingPane}`}
+            />
+          </div>
+        </div>
+      </motion.div>
+      <motion.div
+        className={incomingShellClass}
+        style={{
+          ...incomingPaneStyle,
+          transformOrigin:
+            incomingPane === "right" ? "left center" : "right center",
+          transformStyle: "preserve-3d",
+          zIndex: 12,
+          pointerEvents: "none",
+          willChange: "transform, opacity",
+        }}
+        initial={{ rotateY: incomingStartRotateY, opacity: incomingOpacity[0] }}
+        animate={{ rotateY: 0, opacity: incomingOpacity[1] }}
+        transition={{ duration: VAULT_PAGE_FLIP_DURATION, ease: bookEase }}
+        onAnimationComplete={onAnimationComplete}
+      >
+        <div
+          className="relative flex h-full min-h-0 min-w-0 flex-1"
+          style={{
+            transform: incomingInnerTransform,
+            transformStyle: "preserve-3d",
+            willChange: "transform",
+          }}
+        >
+          <div className="absolute inset-0 flex min-h-0 min-w-0" style={bfHidden}>
+            <CatalogueProductPage
+              products={backProducts}
+              vaultParchment={vaultParchment}
+              pageKey={`turn-back-${turnState.toView.spreadIndex}-${turnState.toView.mobileFacingLeaf}-${incomingPane}`}
+            />
+          </div>
+        </div>
+      </motion.div>
+    </>
+  );
+}
+
 function ProductTile({ p }: { p: PreviewProduct }) {
   const isDemo = p.handle.startsWith("vault-demo");
   const href = isDemo ? "/shop" : `/products/${p.handle}`;
   return (
     <Link
       href={href}
-      className="group flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-hidden rounded border border-[color:var(--color-vault-gold)]/45 bg-[#0c0a08] shadow-md transition hover:border-[color:var(--color-vault-gold)] hover:shadow-[0_0_18px_rgba(212,175,55,0.22)]"
+      className="group flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-hidden rounded-[5px] border border-zinc-950/90 bg-[#0a0908] shadow-[0_1px_0_rgba(212,175,55,0.12),inset_0_0_0_1px_rgba(212,175,55,0.1)] transition hover:border-[color:var(--color-vault-gold)] hover:shadow-[0_0_14px_rgba(212,175,55,0.22)]"
     >
-      <div className="relative aspect-square w-full shrink-0 bg-black">
+      <div className="relative min-h-0 w-full flex-1 bg-black">
         {p.thumbnail ? (
           <Image
             src={p.thumbnail}
             alt=""
             fill
-            sizes="(max-width: 640px) 28vw, 200px"
+            sizes="(max-width: 640px) 22vw, 120px"
             loading="eager"
             className="object-cover transition group-hover:brightness-105"
           />
@@ -444,11 +861,11 @@ function ProductTile({ p }: { p: PreviewProduct }) {
           <PlaceholderThumb seed={p.handle} />
         )}
       </div>
-      <div className="min-h-[2.5rem] p-1.5 text-center font-[family-name:var(--font-cinzel)] text-[10px] leading-tight text-[color:var(--color-vault-parchment)] group-hover:text-[color:var(--color-vault-gold)] sm:text-[11px]">
+      <div className="line-clamp-2 shrink-0 px-1 py-0.5 text-center font-[family-name:var(--font-cinzel)] text-[7px] leading-tight text-[color:var(--color-vault-parchment)] group-hover:text-[color:var(--color-vault-gold)] sm:text-[8px]">
         {p.title}
         {isDemo ? (
-          <span className="mt-0.5 block text-[9px] font-normal tracking-wide text-[color:var(--color-vault-gold)]/50">
-            Demo listing
+          <span className="mt-0.5 block text-[6px] font-normal tracking-wide text-[color:var(--color-vault-gold)]/45 sm:text-[7px]">
+            Demo
           </span>
         ) : null}
       </div>
@@ -462,14 +879,20 @@ export default function BookVault({
   products: PreviewProduct[];
 }) {
   const reduceMotion = useReducedMotion();
+  const narrowCatalogue = useNarrowVaultCatalogue();
   const catalog = useMemo(() => buildCatalog(products), [products]);
   const spreads = useMemo(() => totalSpreads(catalog.length), [catalog.length]);
 
   const [open, setOpen] = useState(false);
-  const [spreadIndex, setSpreadIndex] = useState(0);
+  const [catalogueView, setCatalogueView] = useState<CatalogueView>({
+    spreadIndex: 0,
+    mobileFacingLeaf: "L",
+  });
+  const [turnState, setTurnState] = useState<CatalogueTurnState | null>(null);
   /** Show catalogue portal only after cover open animation so it does not sit on top of the cover mid-flip. */
   const [vaultCatalogueVisible, setVaultCatalogueVisible] = useState(false);
   const bookShellRef = useRef<HTMLDivElement>(null);
+  const prevNarrowCatalogueRef = useRef(narrowCatalogue);
   const [portalBox, setPortalBox] = useState<{
     top: number;
     left: number;
@@ -478,15 +901,23 @@ export default function BookVault({
   } | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      setSpreadIndex(0);
-      setVaultCatalogueVisible(false);
-      return;
-    }
-    if (reduceMotion) {
-      setVaultCatalogueVisible(true);
-      return;
-    }
+    const previous = prevNarrowCatalogueRef.current;
+    prevNarrowCatalogueRef.current = narrowCatalogue;
+    if (previous === narrowCatalogue) return;
+    const id = window.requestAnimationFrame(() => {
+      setCatalogueView((current) =>
+        normalizeCatalogueView(current, narrowCatalogue),
+      );
+      if (turnState) {
+        setCatalogueView(normalizeCatalogueView(turnState.toView, narrowCatalogue));
+        setTurnState(null);
+      }
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [narrowCatalogue, turnState]);
+
+  useEffect(() => {
+    if (!open || reduceMotion) return;
     const id = window.setTimeout(
       () => setVaultCatalogueVisible(true),
       VAULT_CATALOGUE_REVEAL_MS,
@@ -513,10 +944,7 @@ export default function BookVault({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPortalBox(null);
-      return;
-    }
+    if (!open || !vaultCatalogueVisible) return;
     syncPortalBox();
     const el = bookShellRef.current;
     if (!el) return;
@@ -532,24 +960,81 @@ export default function BookVault({
     };
   }, [open, vaultCatalogueVisible, syncPortalBox]);
 
-  const handleVault = () => {
-    setOpen(true);
-  };
+  const currentView = useMemo(
+    () => normalizeCatalogueView(catalogueView, narrowCatalogue),
+    [catalogueView, narrowCatalogue],
+  );
+  const baseView = turnState ? turnState.toView : currentView;
+  const controlsDisabled = Boolean(turnState);
 
-  const goNext = useCallback(() => {
-    setSpreadIndex((i) => Math.min(i + 1, spreads - 1));
-  }, [spreads]);
+  const handleVault = useCallback(() => {
+    const resetView = { spreadIndex: 0, mobileFacingLeaf: "L" as const };
+    const reopen = () => {
+      setCatalogueView(resetView);
+      setTurnState(null);
+      setPortalBox(null);
+      setOpen(true);
+      setVaultCatalogueVisible(Boolean(reduceMotion));
+    };
+    if (open) {
+      setOpen(false);
+      setVaultCatalogueVisible(false);
+      window.requestAnimationFrame(reopen);
+      return;
+    }
+    reopen();
+  }, [open, reduceMotion]);
 
-  const goPrev = useCallback(() => {
-    setSpreadIndex((i) => Math.max(i - 1, 0));
-  }, []);
+  const commitTurn = useCallback(() => {
+    if (!turnState) return;
+    setCatalogueView(normalizeCatalogueView(turnState.toView, narrowCatalogue));
+    setTurnState(null);
+  }, [narrowCatalogue, turnState]);
+
+  const requestTurn = useCallback(
+    (direction: "forward" | "backward") => {
+      if (turnState) return;
+      const nextView =
+        direction === "forward"
+          ? getNextView(currentView, narrowCatalogue, spreads)
+          : getPrevView(currentView, narrowCatalogue);
+      if (!nextView) return;
+      const normalizedNextView = normalizeCatalogueView(
+        nextView,
+        narrowCatalogue,
+      );
+      if (reduceMotion) {
+        setCatalogueView(normalizedNextView);
+        return;
+      }
+      setTurnState(
+        getTurnState(
+          direction,
+          currentView,
+          normalizedNextView,
+          narrowCatalogue,
+        ),
+      );
+    },
+    [currentView, narrowCatalogue, reduceMotion, spreads, turnState],
+  );
+
+  const goNextCatalogue = useCallback(() => {
+    requestTurn("forward");
+  }, [requestTurn]);
+
+  const goPrevCatalogue = useCallback(() => {
+    requestTurn("backward");
+  }, [requestTurn]);
 
   const closeVault = useCallback(() => {
+    if (turnState) return;
     setOpen(false);
-    setSpreadIndex(0);
-  }, []);
-
-  const spread = sliceSpread(catalog, spreadIndex);
+    setCatalogueView({ spreadIndex: 0, mobileFacingLeaf: "L" });
+    setTurnState(null);
+    setVaultCatalogueVisible(false);
+    setPortalBox(null);
+  }, [turnState]);
 
   const portalShellStyle: CSSProperties | undefined =
     portalBox == null
@@ -577,33 +1062,38 @@ export default function BookVault({
         className="min-h-0 min-w-0 overflow-visible bg-transparent"
         style={portalShellStyle}
       >
-        {spreadIndex === 0 ? (
-          <FirstSpreadCatalogue
+        <div
+          className="relative h-full min-h-0 min-w-0"
+          style={{ perspective: "min(1600px, 200vw)" }}
+        >
+          <VaultCatalogueSpread
+            view={baseView}
+            catalog={catalog}
             portalWidth={portalBox.width}
-            spread={spread}
             vaultParchment={vaultParchment}
-            spreadProductGrid={spreadProductGrid}
             spreadPageLabel={spreadPageLabel}
-            goNext={goNext}
+            goNextCatalogue={goNextCatalogue}
+            goPrevCatalogue={goPrevCatalogue}
             closeVault={closeVault}
             spreads={spreads}
             reduceMotion={Boolean(reduceMotion)}
+            narrowCatalogue={narrowCatalogue}
+            controlsDisabled={controlsDisabled}
           />
-        ) : (
-          <FacingCatalogueSpread
-            portalWidth={portalBox.width}
-            spreadIndex={spreadIndex}
-            spread={spread}
-            vaultParchment={vaultParchment}
-            spreadProductGrid={spreadProductGrid}
-            spreadPageLabel={spreadPageLabel}
-            goPrev={goPrev}
-            goNext={goNext}
-            closeVault={closeVault}
-            spreads={spreads}
-            reduceMotion={Boolean(reduceMotion)}
-          />
-        )}
+          {turnState ? (
+            <>
+              {/* Keep the destination spread static underneath while one physical leaf turns over it. */}
+              <TurningLeafOverlay
+                turnState={turnState}
+                catalog={catalog}
+                portalWidth={portalBox.width}
+                vaultParchment={vaultParchment}
+                narrowCatalogue={narrowCatalogue}
+                onAnimationComplete={commitTurn}
+              />
+            </>
+          ) : null}
+        </div>
       </div>,
       document.body,
     );
@@ -715,9 +1205,9 @@ export default function BookVault({
               <button
                 type="button"
                 aria-label="Open the vault"
+                aria-pressed={open}
                 onClick={handleVault}
-                disabled={open}
-                className="absolute inset-0 z-10 cursor-pointer overflow-hidden rounded-r-md rounded-l-sm border-0 bg-transparent p-0 shadow-[0_10px_32px_rgba(0,0,0,0.65),inset_0_0_0_1px_rgba(0,0,0,0.25)] outline-none ring-0 focus-visible:ring-2 focus-visible:ring-[color:var(--color-vault-gold)]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0604] disabled:pointer-events-none disabled:cursor-default"
+                className="absolute inset-0 z-10 cursor-pointer overflow-hidden rounded-r-md rounded-l-sm border-0 bg-transparent p-0 shadow-[0_10px_32px_rgba(0,0,0,0.65),inset_0_0_0_1px_rgba(0,0,0,0.25)] outline-none ring-0 focus-visible:ring-2 focus-visible:ring-[color:var(--color-vault-gold)]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0604]"
                 style={{
                   ...bfHidden,
                   transform: "translateZ(0.75px)",
