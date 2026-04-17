@@ -101,50 +101,16 @@ function BinderNineGrid({ children }: { children: ReactNode }) {
   );
 }
 
-const DEMO_TITLES = [
-  "Sealed wax assortment",
-  "Brass corner protectors",
-  "Hand-bound ledger (blank)",
-  "Velvet cord & tassel",
-  "Antique map fragment",
-  "Iron wax stamp",
-  "Glass inkwell, midnight",
-  "Gilded page markers",
-  "Leather cord, oxblood",
-  "Obsidian worry stone",
-  "Calligrapher’s quill set",
-  "Embossed ex libris plate",
-  "Ribbon bookmark trio",
-  "Candle snuffer, forged",
-  "Small skeleton key",
-  "Parchment sheets (25)",
-  "Crimson sealing powder",
-  "Travel compass, pocket",
-  "Monogram embosser",
-  "Herbalist’s label set",
-  "Miniature hourglass",
-  "Thread & needle case",
-  "Stone rune markers",
-  "Velvet drawstring pouch",
-  "Brass page weights",
-  "Cabinet card frame",
-  "Feather dip pen",
-  "Cabinet of curiosities tag",
-  "Antique ribbon spool",
-  "Copper foil sheets",
-  "Silk screen mesh, small",
-];
-
-const PLACEHOLDER_CARD_IMAGES = [
-  "/cards/magic-card-01.jpg",
-  "/cards/magic-card-02.jpg",
-  "/cards/magic-card-03.jpg",
-  "/cards/magic-card-04.jpg",
-  "/cards/magic-card-05.jpeg",
-  "/cards/magic-card-06.jpg",
-  "/cards/magic-card-07.jpg",
-  "/cards/magic-card-08.jpg",
-  "/cards/magic-card-09.jpg",
+const PLACEHOLDER_CARDS = [
+  { title: "Dig Through Time", imageSrc: "/cards/magic-card-01.jpg" },
+  { title: "Alhammarret, High Arbiter", imageSrc: "/cards/magic-card-02.jpg" },
+  { title: "City on Fire", imageSrc: "/cards/magic-card-03.jpg" },
+  { title: "Witch's Cottage", imageSrc: "/cards/magic-card-04.jpg" },
+  { title: "Winter, Misanthropic Guide", imageSrc: "/cards/magic-card-05.jpeg" },
+  { title: "Totally Lost", imageSrc: "/cards/magic-card-06.jpg" },
+  { title: "Take Flight", imageSrc: "/cards/magic-card-07.jpg" },
+  { title: "Frantic Search", imageSrc: "/cards/magic-card-08.jpg" },
+  { title: "Harrow", imageSrc: "/cards/magic-card-09.jpg" },
 ] as const;
 
 function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
@@ -155,11 +121,13 @@ function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
     const id = `vault-placeholder-${n}`;
     if (!ids.has(id)) {
       ids.add(id);
+      const placeholderCard =
+        PLACEHOLDER_CARDS[n % PLACEHOLDER_CARDS.length];
       out.push({
         id,
-        title: DEMO_TITLES[n % DEMO_TITLES.length],
+        title: placeholderCard.title,
         href: "/shop",
-        imageSrc: PLACEHOLDER_CARD_IMAGES[n % PLACEHOLDER_CARD_IMAGES.length],
+        imageSrc: placeholderCard.imageSrc,
         badge: "Archive",
         isPlaceholder: true,
       });

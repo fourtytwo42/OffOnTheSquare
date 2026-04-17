@@ -1,50 +1,83 @@
-import BookVault from "@/components/vault/BookVault";
 import VaultBook, { type VaultBookItem } from "@/components/vault/VaultBook";
-import { getMedusa } from "@/lib/medusa";
-import { getDefaultRegionId } from "@/lib/region";
+
+const MAGIC_CARD_ITEMS: VaultBookItem[] = [
+  {
+    id: "magic-card-01",
+    title: "Dig Through Time",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-01.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-02",
+    title: "Alhammarret, High Arbiter",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-02.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-03",
+    title: "City on Fire",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-03.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-04",
+    title: "Witch's Cottage",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-04.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-05",
+    title: "Winter, Misanthropic Guide",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-05.jpeg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-06",
+    title: "Totally Lost",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-06.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-07",
+    title: "Take Flight",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-07.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-08",
+    title: "Frantic Search",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-08.jpg",
+    badge: "Magic",
+  },
+  {
+    id: "magic-card-09",
+    title: "Harrow",
+    href: "/shop",
+    imageSrc: "/cards/magic-card-09.jpg",
+    badge: "Magic",
+  },
+];
 
 export default async function HomePage() {
-  const sdk = getMedusa();
-  const region_id = await getDefaultRegionId();
-  const { products } = await sdk.store.product.list({
-    region_id,
-    limit: 8,
-    fields:
-      "*thumbnail,*images,*variants.calculated_price,*variants.inventory_items",
-  });
-
-  type P = {
-    id?: string;
-    handle?: string | null;
-    title?: string | null;
-    thumbnail?: string | null;
-    images?: { url?: string | null }[] | null;
-  };
-  const preview =
-    (products as P[] | null)?.map((p) => {
-      const firstImg = p.images?.find((im) => im?.url)?.url ?? null;
-      return {
-        id: p.id!,
-        handle: p.handle!,
-        title: p.title!,
-        thumbnail: p.thumbnail ?? firstImg,
-      };
-    }) ?? [];
-
-  const archiveItems: VaultBookItem[] = preview
-    .slice(0, 5)
+  const archiveItems: VaultBookItem[] = MAGIC_CARD_ITEMS.slice(0, 5)
     .reverse()
-    .map((product, index) => ({
-      id: `archive-${product.id}`,
-      title: `${product.title} Archive`,
-      href: `/products/${product.handle}`,
-      imageSrc: product.thumbnail,
-      badge: index < 3 ? "Archive" : undefined,
+    .map((card, index) => ({
+      ...card,
+      id: `archive-${card.id}`,
+      badge: index < 3 ? "Archive" : card.badge,
     }));
 
   return (
     <>
-      <BookVault products={preview} />
+      <VaultBook items={MAGIC_CARD_ITEMS} />
       <VaultBook
         items={archiveItems}
         coverImageSrc="/book2.png"
