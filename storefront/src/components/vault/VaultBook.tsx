@@ -135,6 +135,18 @@ const DEMO_TITLES = [
   "Silk screen mesh, small",
 ];
 
+const PLACEHOLDER_CARD_IMAGES = [
+  "/cards/magic-card-01.jpg",
+  "/cards/magic-card-02.jpg",
+  "/cards/magic-card-03.jpg",
+  "/cards/magic-card-04.jpg",
+  "/cards/magic-card-05.jpeg",
+  "/cards/magic-card-06.jpg",
+  "/cards/magic-card-07.jpg",
+  "/cards/magic-card-08.jpg",
+  "/cards/magic-card-09.jpg",
+] as const;
+
 function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
   const out: VaultBookItem[] = [...real];
   const ids = new Set(out.map((p) => p.id));
@@ -147,8 +159,8 @@ function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
         id,
         title: DEMO_TITLES[n % DEMO_TITLES.length],
         href: "/shop",
-        imageSrc: `https://picsum.photos/seed/${encodeURIComponent(id)}/320/320`,
-        badge: "Demo",
+        imageSrc: PLACEHOLDER_CARD_IMAGES[n % PLACEHOLDER_CARD_IMAGES.length],
+        badge: "Archive",
         isPlaceholder: true,
       });
     }
