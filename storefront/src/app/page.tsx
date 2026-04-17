@@ -67,22 +67,5 @@ const MAGIC_CARD_ITEMS: VaultBookItem[] = [
 ];
 
 export default async function HomePage() {
-  const archiveItems: VaultBookItem[] = MAGIC_CARD_ITEMS.slice(0, 5)
-    .reverse()
-    .map((card, index) => ({
-      ...card,
-      id: `archive-${card.id}`,
-      badge: index < 3 ? "Archive" : card.badge,
-    }));
-
-  return (
-    <>
-      <VaultBook items={MAGIC_CARD_ITEMS} />
-      <VaultBook
-        items={archiveItems}
-        coverImageSrc="/book2.png"
-        className="min-h-[auto] pt-0"
-      />
-    </>
-  );
+  return <VaultBook items={MAGIC_CARD_ITEMS} />;
 }
