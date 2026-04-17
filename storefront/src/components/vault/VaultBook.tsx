@@ -113,6 +113,30 @@ const PLACEHOLDER_CARDS = [
   { title: "Harrow", imageSrc: "/cards/magic-card-09.jpg" },
 ] as const;
 
+const PLACEHOLDER_PAGE_MULTIPLIERS = [1, 2, 4, 5, 7, 8] as const;
+
+function getPlaceholderCardForPosition(position: number) {
+  const cardCount = PLACEHOLDER_CARDS.length;
+  const pageIndex =
+    position < FIRST_RIGHT
+      ? 0
+      : 1 + Math.floor((position - FIRST_RIGHT) / SLOTS_PER_PAGE);
+  const slotIndex =
+    position < FIRST_RIGHT ? position : (position - FIRST_RIGHT) % SLOTS_PER_PAGE;
+
+  // Deterministic page-aware permutation so each page presents the same pool
+  // of placeholder cards in a different layout.
+  const multiplier =
+    PLACEHOLDER_PAGE_MULTIPLIERS[
+      pageIndex % PLACEHOLDER_PAGE_MULTIPLIERS.length
+    ];
+  const offset = (pageIndex * 3 + Math.floor(pageIndex / 6)) % cardCount;
+  const cardIndex =
+    (slotIndex * multiplier + offset) % cardCount;
+
+  return PLACEHOLDER_CARDS[cardIndex];
+}
+
 function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
   const out: VaultBookItem[] = [...real];
   const ids = new Set(out.map((p) => p.id));
@@ -121,8 +145,7 @@ function buildCatalog(real: VaultBookItem[]): VaultBookItem[] {
     const id = `vault-placeholder-${n}`;
     if (!ids.has(id)) {
       ids.add(id);
-      const placeholderCard =
-        PLACEHOLDER_CARDS[n % PLACEHOLDER_CARDS.length];
+      const placeholderCard = getPlaceholderCardForPosition(out.length);
       out.push({
         id,
         title: placeholderCard.title,
@@ -728,7 +751,7 @@ function ProductTile({
             fetchPriority={prioritizeImage ? "high" : undefined}
             priority={prioritizeImage}
             unoptimized
-            className="object-cover transition group-hover:brightness-105"
+            className="object-contain transition group-hover:brightness-105"
           />
         ) : (
           <PlaceholderThumb seed={p.id} />
