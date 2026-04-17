@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   useCallback,
@@ -24,11 +24,10 @@ type PreviewProduct = {
 };
 
 const bookEase = [0.22, 1, 0.36, 1] as const;
-
-const VAULT_PAGE_FLIP_DURATION = 0.52;
-
-/** Cover open motion is ~1.15s; show catalogue once the flip is far enough along (was 1180ms — too slow for UX). */
-const VAULT_CATALOGUE_REVEAL_MS = 720;
+const catalogueFadeDuration = 0.14;
+const VAULT_COVER_OPEN_DURATION = 1.15;
+const VAULT_PAGE_REVEAL_MS = 620;
+const VAULT_CONTROLS_REVEAL_MS = 1080;
 
 /** Viewports below `md` (768px): spread 2+ hides cards on the left leaf; nine slots + nav stay on the right half only. */
 const VAULT_CATALOGUE_NARROW_MQ = "(max-width: 767px)";
@@ -211,13 +210,6 @@ type CatalogueView = {
   mobileFacingLeaf: "L" | "R";
 };
 
-type CatalogueTurnState = {
-  direction: "forward" | "backward";
-  pane: "left" | "right";
-  fromView: CatalogueView;
-  toView: CatalogueView;
-};
-
 function normalizeCatalogueView(
   view: CatalogueView,
   narrowCatalogue: boolean,
@@ -321,14 +313,22 @@ function getRightLeafRestTransform(): string {
   return `perspective(${LEFT_PORTAL_PERSPECTIVE}px) rotateY(0deg) translateX(${RIGHT_PORTAL_TRANSLATE_X}px) scaleX(1) scaleY(1)`;
 }
 
+function getLeafShellClass(pane: "left" | "right"): string {
+  return pane === "right"
+    ? "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
+    : "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5";
+}
+
 function CatalogueProductPage({
   products,
   vaultParchment,
   pageKey,
+  prioritizeImages = false,
 }: {
   products: PreviewProduct[];
   vaultParchment: string;
   pageKey: string;
+  prioritizeImages?: boolean;
 }) {
   return (
     <div
@@ -339,7 +339,11 @@ function CatalogueProductPage({
       <BinderNineGrid>
         {nineSlots(products).map((p, i) =>
           p ? (
-            <ProductTile key={p.id} p={p} />
+            <ProductTile
+              key={p.id}
+              p={p}
+              prioritizeImage={prioritizeImages && i < 4}
+            />
           ) : (
             <BinderEmptySlot key={`${pageKey}-empty-${i}`} />
           ),
@@ -376,18 +380,6 @@ function getRightLeafProducts(
   return view.mobileFacingLeaf === "L" ? spread.left : spread.right;
 }
 
-function getTurnState(
-  direction: "forward" | "backward",
-  fromView: CatalogueView,
-  toView: CatalogueView,
-  narrowCatalogue: boolean,
-): CatalogueTurnState {
-  if (narrowCatalogue || direction === "forward") {
-    return { direction, pane: "right", fromView, toView };
-  }
-  return { direction, pane: "left", fromView, toView };
-}
-
 /** Page 1: two-page-wide portal; Close sits on the physical left leaf (same half as spread 2+). */
 function FirstSpreadCatalogue({
   portalWidth,
@@ -400,6 +392,7 @@ function FirstSpreadCatalogue({
   reduceMotion,
   narrowCatalogue,
   controlsDisabled,
+  showLeftControls,
 }: {
   portalWidth: number;
   spread: { left: PreviewProduct[]; right: PreviewProduct[] };
@@ -411,6 +404,7 @@ function FirstSpreadCatalogue({
   reduceMotion: boolean;
   narrowCatalogue: boolean;
   controlsDisabled: boolean;
+  showLeftControls: boolean;
 }) {
   const { leftPane, rightPane } = getPaneLayout(portalWidth);
   const leftTiltStyle = getLeftLeafRestStyle(reduceMotion);
@@ -423,7 +417,7 @@ function FirstSpreadCatalogue({
     >
       <div
         data-vault-first-left-leaf
-        className="box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5"
+        className={getLeafShellClass("left")}
         style={leftPane}
       >
         <div
@@ -442,7 +436,12 @@ function FirstSpreadCatalogue({
                   type="button"
                   onClick={closeVault}
                   disabled={controlsDisabled}
+                  aria-hidden={!showLeftControls}
                   className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                  style={{
+                    opacity: showLeftControls ? 1 : 0,
+                    pointerEvents: showLeftControls ? "auto" : "none",
+                  }}
                 >
                   Close
                 </button>
@@ -453,7 +452,7 @@ function FirstSpreadCatalogue({
       </div>
       <div
         data-vault-first-right-leaf
-        className="box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
+        className={getLeafShellClass("right")}
         style={rightPane}
       >
         <div
@@ -464,6 +463,7 @@ function FirstSpreadCatalogue({
             products={spread.right}
             vaultParchment={vaultParchment}
             pageKey="first-right"
+            prioritizeImages
           />
           <div className="flex w-full shrink-0 flex-wrap items-center justify-center gap-2">
             {narrowCatalogue ? (
@@ -508,6 +508,7 @@ function FacingCatalogueSpread({
   reduceMotion,
   narrowCatalogue,
   controlsDisabled,
+  showLeftControls,
 }: {
   portalWidth: number;
   view: CatalogueView;
@@ -521,6 +522,7 @@ function FacingCatalogueSpread({
   reduceMotion: boolean;
   narrowCatalogue: boolean;
   controlsDisabled: boolean;
+  showLeftControls: boolean;
 }) {
   const { leftPane, rightPane } = getPaneLayout(portalWidth);
   const leftTiltStyle = getLeftLeafRestStyle(reduceMotion);
@@ -534,7 +536,7 @@ function FacingCatalogueSpread({
     >
       <div
         data-vault-left-leaf
-        className="box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5"
+        className={getLeafShellClass("left")}
         style={leftPane}
       >
         <div
@@ -563,7 +565,12 @@ function FacingCatalogueSpread({
                     type="button"
                     onClick={goPrev}
                     disabled={controlsDisabled}
+                    aria-hidden={!showLeftControls}
                     className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                    style={{
+                      opacity: showLeftControls ? 1 : 0,
+                      pointerEvents: showLeftControls ? "auto" : "none",
+                    }}
                   >
                     <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     Previous
@@ -572,7 +579,12 @@ function FacingCatalogueSpread({
                     type="button"
                     onClick={closeVault}
                     disabled={controlsDisabled}
+                    aria-hidden={!showLeftControls}
                     className="inline-flex items-center gap-1 rounded border border-[#8a7a62]/50 bg-white/50 px-2 py-1.5 text-[10px] font-[family-name:var(--font-cinzel)] uppercase tracking-widest text-[#3d3528] hover:border-[#6b5c42]/70 sm:text-xs"
+                    style={{
+                      opacity: showLeftControls ? 1 : 0,
+                      pointerEvents: showLeftControls ? "auto" : "none",
+                    }}
                   >
                     Close
                   </button>
@@ -584,7 +596,7 @@ function FacingCatalogueSpread({
       </div>
       <div
         data-vault-right-leaf
-        className="box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
+        className={getLeafShellClass("right")}
         style={rightPane}
       >
         <div
@@ -656,6 +668,7 @@ function VaultCatalogueSpread({
   reduceMotion,
   narrowCatalogue,
   controlsDisabled,
+  showLeftControls,
 }: {
   view: CatalogueView;
   catalog: PreviewProduct[];
@@ -669,6 +682,7 @@ function VaultCatalogueSpread({
   reduceMotion: boolean;
   narrowCatalogue: boolean;
   controlsDisabled: boolean;
+  showLeftControls: boolean;
 }) {
   const spread = sliceSpread(catalog, view.spreadIndex);
   if (view.spreadIndex === 0) {
@@ -684,6 +698,7 @@ function VaultCatalogueSpread({
         reduceMotion={reduceMotion}
         narrowCatalogue={narrowCatalogue}
         controlsDisabled={controlsDisabled}
+        showLeftControls={showLeftControls}
       />
     );
   }
@@ -701,145 +716,18 @@ function VaultCatalogueSpread({
       reduceMotion={reduceMotion}
       narrowCatalogue={narrowCatalogue}
       controlsDisabled={controlsDisabled}
+      showLeftControls={showLeftControls}
     />
   );
 }
 
-function TurningLeafOverlay({
-  turnState,
-  catalog,
-  portalWidth,
-  vaultParchment,
-  narrowCatalogue,
-  onAnimationComplete,
+function ProductTile({
+  p,
+  prioritizeImage = false,
 }: {
-  turnState: CatalogueTurnState;
-  catalog: PreviewProduct[];
-  portalWidth: number;
-  vaultParchment: string;
-  narrowCatalogue: boolean;
-  onAnimationComplete: () => void;
+  p: PreviewProduct;
+  prioritizeImage?: boolean;
 }) {
-  const { leftPane, rightPane } = getPaneLayout(portalWidth);
-  const fromSpread = sliceSpread(catalog, turnState.fromView.spreadIndex);
-  const toSpread = sliceSpread(catalog, turnState.toView.spreadIndex);
-  const frontProducts =
-    turnState.pane === "right"
-      ? getRightLeafProducts(turnState.fromView, fromSpread, narrowCatalogue)
-      : fromSpread.left;
-  const backProducts =
-    turnState.pane === "right"
-      ? getRightLeafProducts(turnState.toView, toSpread, narrowCatalogue)
-      : toSpread.right;
-  const outgoingPane = turnState.pane;
-  const incomingPane = narrowCatalogue
-    ? "right"
-    : turnState.pane === "right"
-      ? "left"
-      : "right";
-  const outgoingPaneStyle = outgoingPane === "right" ? rightPane : leftPane;
-  const incomingPaneStyle = incomingPane === "right" ? rightPane : leftPane;
-  const outgoingShellClass =
-    outgoingPane === "right"
-      ? "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
-      : "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5";
-  const incomingShellClass =
-    incomingPane === "right"
-      ? "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible p-1.5 sm:pl-1.5 sm:pr-2 sm:pt-2 sm:pb-2"
-      : "box-border flex min-h-0 min-w-0 flex-col gap-1.5 overflow-visible py-1.5 pl-0.5 pr-1 sm:py-2 sm:pl-1 sm:pr-1.5";
-  const outgoingInnerTransform =
-    !narrowCatalogue && outgoingPane === "left"
-      ? getLeftLeafRestTransform()
-      : getRightLeafRestTransform();
-  const incomingInnerTransform =
-    !narrowCatalogue && incomingPane === "left"
-      ? getLeftLeafRestTransform()
-      : getRightLeafRestTransform();
-  const outgoingRotateY =
-    outgoingPane === "right"
-      ? turnState.direction === "forward"
-        ? -108
-        : 108
-      : turnState.direction === "backward"
-        ? 108
-        : -108;
-  const incomingStartRotateY =
-    incomingPane === "left"
-      ? -108
-      : 108;
-  const incomingOpacity = narrowCatalogue ? [0.72, 1] : [0.8, 1];
-  return (
-    <>
-      <motion.div
-        className={outgoingShellClass}
-        style={{
-          ...outgoingPaneStyle,
-          transformOrigin:
-            outgoingPane === "right" ? "left center" : "right center",
-          transformStyle: "preserve-3d",
-          zIndex: 13,
-          pointerEvents: "none",
-          willChange: "transform, opacity",
-        }}
-        initial={{ rotateY: 0, opacity: 1 }}
-        animate={{ rotateY: outgoingRotateY, opacity: 0.92 }}
-        transition={{ duration: VAULT_PAGE_FLIP_DURATION, ease: bookEase }}
-      >
-        <div
-          className="relative flex h-full min-h-0 min-w-0 flex-1"
-          style={{
-            transform: outgoingInnerTransform,
-            transformStyle: "preserve-3d",
-            willChange: "transform",
-          }}
-        >
-          <div className="absolute inset-0 flex min-h-0 min-w-0" style={bfHidden}>
-            <CatalogueProductPage
-              products={frontProducts}
-              vaultParchment={vaultParchment}
-              pageKey={`turn-front-${turnState.fromView.spreadIndex}-${turnState.fromView.mobileFacingLeaf}-${outgoingPane}`}
-            />
-          </div>
-        </div>
-      </motion.div>
-      <motion.div
-        className={incomingShellClass}
-        style={{
-          ...incomingPaneStyle,
-          transformOrigin:
-            incomingPane === "right" ? "left center" : "right center",
-          transformStyle: "preserve-3d",
-          zIndex: 12,
-          pointerEvents: "none",
-          willChange: "transform, opacity",
-        }}
-        initial={{ rotateY: incomingStartRotateY, opacity: incomingOpacity[0] }}
-        animate={{ rotateY: 0, opacity: incomingOpacity[1] }}
-        transition={{ duration: VAULT_PAGE_FLIP_DURATION, ease: bookEase }}
-        onAnimationComplete={onAnimationComplete}
-      >
-        <div
-          className="relative flex h-full min-h-0 min-w-0 flex-1"
-          style={{
-            transform: incomingInnerTransform,
-            transformStyle: "preserve-3d",
-            willChange: "transform",
-          }}
-        >
-          <div className="absolute inset-0 flex min-h-0 min-w-0" style={bfHidden}>
-            <CatalogueProductPage
-              products={backProducts}
-              vaultParchment={vaultParchment}
-              pageKey={`turn-back-${turnState.toView.spreadIndex}-${turnState.toView.mobileFacingLeaf}-${incomingPane}`}
-            />
-          </div>
-        </div>
-      </motion.div>
-    </>
-  );
-}
-
-function ProductTile({ p }: { p: PreviewProduct }) {
   const isDemo = p.handle.startsWith("vault-demo");
   const href = isDemo ? "/shop" : `/products/${p.handle}`;
   return (
@@ -855,6 +743,9 @@ function ProductTile({ p }: { p: PreviewProduct }) {
             fill
             sizes="(max-width: 640px) 22vw, 120px"
             loading="eager"
+            fetchPriority={prioritizeImage ? "high" : undefined}
+            priority={prioritizeImage}
+            unoptimized
             className="object-cover transition group-hover:brightness-105"
           />
         ) : (
@@ -882,15 +773,20 @@ export default function BookVault({
   const narrowCatalogue = useNarrowVaultCatalogue();
   const catalog = useMemo(() => buildCatalog(products), [products]);
   const spreads = useMemo(() => totalSpreads(catalog.length), [catalog.length]);
+  const initialRightLeafProducts = useMemo(
+    () => sliceSpread(catalog, 0).right.filter((product) => product.thumbnail),
+    [catalog],
+  );
 
   const [open, setOpen] = useState(false);
   const [catalogueView, setCatalogueView] = useState<CatalogueView>({
     spreadIndex: 0,
     mobileFacingLeaf: "L",
   });
-  const [turnState, setTurnState] = useState<CatalogueTurnState | null>(null);
   /** Show catalogue portal only after cover open animation so it does not sit on top of the cover mid-flip. */
+  const [vaultCatalogueMounted, setVaultCatalogueMounted] = useState(false);
   const [vaultCatalogueVisible, setVaultCatalogueVisible] = useState(false);
+  const [vaultLeftControlsVisible, setVaultLeftControlsVisible] = useState(false);
   const bookShellRef = useRef<HTMLDivElement>(null);
   const prevNarrowCatalogueRef = useRef(narrowCatalogue);
   const [portalBox, setPortalBox] = useState<{
@@ -908,22 +804,45 @@ export default function BookVault({
       setCatalogueView((current) =>
         normalizeCatalogueView(current, narrowCatalogue),
       );
-      if (turnState) {
-        setCatalogueView(normalizeCatalogueView(turnState.toView, narrowCatalogue));
-        setTurnState(null);
-      }
     });
     return () => window.cancelAnimationFrame(id);
-  }, [narrowCatalogue, turnState]);
+  }, [narrowCatalogue]);
 
   useEffect(() => {
-    if (!open || reduceMotion) return;
-    const id = window.setTimeout(
-      () => setVaultCatalogueVisible(true),
-      VAULT_CATALOGUE_REVEAL_MS,
-    );
-    return () => clearTimeout(id);
-  }, [open, reduceMotion]);
+    if (typeof window === "undefined") return;
+    const preloaders = initialRightLeafProducts
+      .map((product) => product.thumbnail)
+      .filter((thumbnail): thumbnail is string => Boolean(thumbnail))
+      .map((thumbnail) => {
+        const img = new window.Image();
+        img.decoding = "async";
+        img.loading = "eager";
+        img.src = thumbnail;
+        return img;
+      });
+
+    return () => {
+      preloaders.length = 0;
+    };
+  }, [initialRightLeafProducts]);
+
+  useEffect(() => {
+    if (!open || !vaultCatalogueMounted) return;
+    if (reduceMotion) return;
+
+    const pageTimer = window.setTimeout(() => {
+      setVaultCatalogueVisible(true);
+    }, VAULT_PAGE_REVEAL_MS);
+
+    const controlsTimer = window.setTimeout(() => {
+      setVaultLeftControlsVisible(true);
+    }, VAULT_CONTROLS_REVEAL_MS);
+
+    return () => {
+      window.clearTimeout(pageTimer);
+      window.clearTimeout(controlsTimer);
+    };
+  }, [open, reduceMotion, vaultCatalogueMounted]);
 
   const syncPortalBox = useCallback(() => {
     const el = bookShellRef.current;
@@ -944,7 +863,7 @@ export default function BookVault({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open || !vaultCatalogueVisible) return;
+    if (!open || !vaultCatalogueMounted) return;
     syncPortalBox();
     const el = bookShellRef.current;
     if (!el) return;
@@ -958,42 +877,38 @@ export default function BookVault({
       window.removeEventListener("resize", onWin);
       window.removeEventListener("scroll", onWin, true);
     };
-  }, [open, vaultCatalogueVisible, syncPortalBox]);
+  }, [open, vaultCatalogueMounted, syncPortalBox]);
 
   const currentView = useMemo(
     () => normalizeCatalogueView(catalogueView, narrowCatalogue),
     [catalogueView, narrowCatalogue],
   );
-  const baseView = turnState ? turnState.toView : currentView;
-  const controlsDisabled = Boolean(turnState);
+  const spreadMotionKey = `${currentView.spreadIndex}-${currentView.mobileFacingLeaf}-${narrowCatalogue ? "narrow" : "wide"}`;
+  const controlsDisabled = false;
 
   const handleVault = useCallback(() => {
     const resetView = { spreadIndex: 0, mobileFacingLeaf: "L" as const };
     const reopen = () => {
       setCatalogueView(resetView);
-      setTurnState(null);
       setPortalBox(null);
       setOpen(true);
+      setVaultCatalogueMounted(true);
       setVaultCatalogueVisible(Boolean(reduceMotion));
+      setVaultLeftControlsVisible(Boolean(reduceMotion));
     };
     if (open) {
       setOpen(false);
+      setVaultCatalogueMounted(false);
       setVaultCatalogueVisible(false);
+      setVaultLeftControlsVisible(false);
       window.requestAnimationFrame(reopen);
       return;
     }
     reopen();
   }, [open, reduceMotion]);
 
-  const commitTurn = useCallback(() => {
-    if (!turnState) return;
-    setCatalogueView(normalizeCatalogueView(turnState.toView, narrowCatalogue));
-    setTurnState(null);
-  }, [narrowCatalogue, turnState]);
-
   const requestTurn = useCallback(
     (direction: "forward" | "backward") => {
-      if (turnState) return;
       const nextView =
         direction === "forward"
           ? getNextView(currentView, narrowCatalogue, spreads)
@@ -1003,20 +918,9 @@ export default function BookVault({
         nextView,
         narrowCatalogue,
       );
-      if (reduceMotion) {
-        setCatalogueView(normalizedNextView);
-        return;
-      }
-      setTurnState(
-        getTurnState(
-          direction,
-          currentView,
-          normalizedNextView,
-          narrowCatalogue,
-        ),
-      );
+      setCatalogueView(normalizedNextView);
     },
-    [currentView, narrowCatalogue, reduceMotion, spreads, turnState],
+    [currentView, narrowCatalogue, spreads],
   );
 
   const goNextCatalogue = useCallback(() => {
@@ -1028,13 +932,13 @@ export default function BookVault({
   }, [requestTurn]);
 
   const closeVault = useCallback(() => {
-    if (turnState) return;
     setOpen(false);
     setCatalogueView({ spreadIndex: 0, mobileFacingLeaf: "L" });
-    setTurnState(null);
+    setVaultCatalogueMounted(false);
     setVaultCatalogueVisible(false);
+    setVaultLeftControlsVisible(false);
     setPortalBox(null);
-  }, [turnState]);
+  }, []);
 
   const portalShellStyle: CSSProperties | undefined =
     portalBox == null
@@ -1046,13 +950,13 @@ export default function BookVault({
           width: portalBox.width,
           height: portalBox.height,
           zIndex: 200,
-          pointerEvents: "auto",
-          opacity: 1,
+          pointerEvents: vaultCatalogueVisible ? "auto" : "none",
+          opacity: vaultCatalogueVisible ? 1 : 0,
         };
 
   const cataloguePortal =
     open &&
-    vaultCatalogueVisible &&
+    vaultCatalogueMounted &&
     portalBox &&
     typeof document !== "undefined" &&
     createPortal(
@@ -1066,33 +970,35 @@ export default function BookVault({
           className="relative h-full min-h-0 min-w-0"
           style={{ perspective: "min(1600px, 200vw)" }}
         >
-          <VaultCatalogueSpread
-            view={baseView}
-            catalog={catalog}
-            portalWidth={portalBox.width}
-            vaultParchment={vaultParchment}
-            spreadPageLabel={spreadPageLabel}
-            goNextCatalogue={goNextCatalogue}
-            goPrevCatalogue={goPrevCatalogue}
-            closeVault={closeVault}
-            spreads={spreads}
-            reduceMotion={Boolean(reduceMotion)}
-            narrowCatalogue={narrowCatalogue}
-            controlsDisabled={controlsDisabled}
-          />
-          {turnState ? (
-            <>
-              {/* Keep the destination spread static underneath while one physical leaf turns over it. */}
-              <TurningLeafOverlay
-                turnState={turnState}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={spreadMotionKey}
+              className="absolute inset-0"
+              initial={reduceMotion ? false : { opacity: 0.74 }}
+              animate={{ opacity: 1 }}
+              exit={reduceMotion ? undefined : { opacity: 0.74 }}
+              transition={{
+                duration: reduceMotion ? 0 : catalogueFadeDuration,
+                ease: "easeOut",
+              }}
+            >
+              <VaultCatalogueSpread
+                view={currentView}
                 catalog={catalog}
                 portalWidth={portalBox.width}
                 vaultParchment={vaultParchment}
-                narrowCatalogue={narrowCatalogue}
-                onAnimationComplete={commitTurn}
-              />
-            </>
-          ) : null}
+                spreadPageLabel={spreadPageLabel}
+                goNextCatalogue={goNextCatalogue}
+                goPrevCatalogue={goPrevCatalogue}
+                closeVault={closeVault}
+              spreads={spreads}
+              reduceMotion={Boolean(reduceMotion)}
+              narrowCatalogue={narrowCatalogue}
+              controlsDisabled={controlsDisabled}
+              showLeftControls={vaultLeftControlsVisible}
+            />
+          </motion.div>
+        </AnimatePresence>
         </div>
       </div>,
       document.body,
@@ -1190,7 +1096,7 @@ export default function BookVault({
                 animate={{
                   rotateY: reduceMotion ? 0 : open ? -158 : 0,
                 }}
-                transition={{ duration: reduceMotion ? 0 : 1.15, ease: bookEase }}
+                transition={{ duration: reduceMotion ? 0 : VAULT_COVER_OPEN_DURATION, ease: bookEase }}
               >
                 <div
                   className="pointer-events-none absolute bottom-0 left-0 top-0 w-[5px] origin-left"
