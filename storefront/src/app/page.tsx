@@ -1,4 +1,5 @@
 import BookVault from "@/components/vault/BookVault";
+import VaultBook, { type VaultBookItem } from "@/components/vault/VaultBook";
 import { getMedusa } from "@/lib/medusa";
 import { getDefaultRegionId } from "@/lib/region";
 
@@ -30,5 +31,24 @@ export default async function HomePage() {
       };
     }) ?? [];
 
-  return <BookVault products={preview} />;
+  const archiveItems: VaultBookItem[] = preview
+    .slice(0, 5)
+    .reverse()
+    .map((product, index) => ({
+      id: `archive-${product.id}`,
+      title: `${product.title} Archive`,
+      href: `/products/${product.handle}`,
+      imageSrc: product.thumbnail,
+      badge: index < 3 ? "Archive" : undefined,
+    }));
+
+  return (
+    <>
+      <BookVault products={preview} />
+      <VaultBook
+        items={archiveItems}
+        className="min-h-[auto] pt-0"
+      />
+    </>
+  );
 }
