@@ -47,6 +47,7 @@ export default async function HomePage() {
       <BookVault products={preview} />
       <VaultBook
         items={archiveItems}
+        coverImageSrc="/book2.png"
         className="min-h-[auto] pt-0"
       />
     </>
