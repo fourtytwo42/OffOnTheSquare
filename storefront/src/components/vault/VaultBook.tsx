@@ -772,21 +772,24 @@ function ProductTile({
 export type VaultBookProps = {
   items: VaultBookItem[];
   coverImageSrc?: string;
+  open?: boolean;
+  defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   className?: string;
+  variant?: "page" | "inline";
+  instanceId?: string;
 };
 
 export default function VaultBook({
   items,
   coverImageSrc = "/book.png",
+  open: controlledOpen,
+  defaultOpen = false,
   onOpenChange,
   className,
-}: {
-  items: VaultBookItem[];
-  coverImageSrc?: string;
-  onOpenChange?: (open: boolean) => void;
-  className?: string;
-}) {
+  variant = "page",
+  instanceId,
+}: VaultBookProps) {
   const reduceMotion = useReducedMotion();
   const narrowCatalogue = useNarrowVaultCatalogue();
   const catalog = useMemo(() => buildCatalog(items), [items]);
@@ -796,7 +799,9 @@ export default function VaultBook({
     [catalog],
   );
 
-  const [open, setOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
   const [catalogueView, setCatalogueView] = useState<CatalogueView>({
     spreadIndex: 0,
     mobileFacingLeaf: "L",
@@ -814,6 +819,16 @@ export default function VaultBook({
     height: number;
   } | null>(null);
 
+  const setOpenState = useCallback(
+    (nextOpen: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(nextOpen);
+      }
+      onOpenChange?.(nextOpen);
+    },
+    [isControlled, onOpenChange],
+  );
+
   useEffect(() => {
     const previous = prevNarrowCatalogueRef.current;
     prevNarrowCatalogueRef.current = narrowCatalogue;
@@ -825,10 +840,6 @@ export default function VaultBook({
     });
     return () => window.cancelAnimationFrame(id);
   }, [narrowCatalogue]);
-
-  useEffect(() => {
-    onOpenChange?.(open);
-  }, [onOpenChange, open]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -865,6 +876,27 @@ export default function VaultBook({
       window.clearTimeout(controlsTimer);
     };
   }, [open, reduceMotion, vaultCatalogueMounted]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (open) {
+        setCatalogueView({ spreadIndex: 0, mobileFacingLeaf: "L" });
+        setPortalBox(null);
+        setVaultCatalogueMounted(true);
+        setVaultCatalogueVisible(Boolean(reduceMotion));
+        setVaultLeftControlsVisible(Boolean(reduceMotion));
+        return;
+      }
+
+      setCatalogueView({ spreadIndex: 0, mobileFacingLeaf: "L" });
+      setVaultCatalogueMounted(false);
+      setVaultCatalogueVisible(false);
+      setVaultLeftControlsVisible(false);
+      setPortalBox(null);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, reduceMotion]);
 
   const syncPortalBox = useCallback(() => {
     const el = bookShellRef.current;
@@ -909,25 +941,8 @@ export default function VaultBook({
   const controlsDisabled = false;
 
   const handleVault = useCallback(() => {
-    const resetView = { spreadIndex: 0, mobileFacingLeaf: "L" as const };
-    const reopen = () => {
-      setCatalogueView(resetView);
-      setPortalBox(null);
-      setOpen(true);
-      setVaultCatalogueMounted(true);
-      setVaultCatalogueVisible(Boolean(reduceMotion));
-      setVaultLeftControlsVisible(Boolean(reduceMotion));
-    };
-    if (open) {
-      setOpen(false);
-      setVaultCatalogueMounted(false);
-      setVaultCatalogueVisible(false);
-      setVaultLeftControlsVisible(false);
-      window.requestAnimationFrame(reopen);
-      return;
-    }
-    reopen();
-  }, [open, reduceMotion]);
+    setOpenState(!open);
+  }, [open, setOpenState]);
 
   const requestTurn = useCallback(
     (direction: "forward" | "backward") => {
@@ -954,13 +969,8 @@ export default function VaultBook({
   }, [requestTurn]);
 
   const closeVault = useCallback(() => {
-    setOpen(false);
-    setCatalogueView({ spreadIndex: 0, mobileFacingLeaf: "L" });
-    setVaultCatalogueMounted(false);
-    setVaultCatalogueVisible(false);
-    setVaultLeftControlsVisible(false);
-    setPortalBox(null);
-  }, []);
+    setOpenState(false);
+  }, [setOpenState]);
 
   const portalShellStyle: CSSProperties | undefined =
     portalBox == null
@@ -984,6 +994,7 @@ export default function VaultBook({
     createPortal(
       <div
         data-vault-spread-portal
+        data-vault-book-instance={instanceId}
         dir="ltr"
         className="min-h-0 min-w-0 overflow-visible bg-transparent"
         style={portalShellStyle}
@@ -1028,7 +1039,12 @@ export default function VaultBook({
 
   return (
     <div
-      className={`relative flex min-h-dvh flex-col items-center px-4 pb-16 pt-8 sm:pt-12 ${className ?? ""}`}
+      data-vault-book-instance={instanceId}
+      className={`relative flex flex-col items-center ${
+        variant === "page"
+          ? "min-h-dvh px-4 pb-16 pt-8 sm:pt-12"
+          : "w-full px-0 py-0"
+      } ${className ?? ""}`}
     >
       <div className="relative z-0 w-full max-w-[min(100%,28rem)] sm:max-w-[30rem]">
         <div className="relative mx-auto flex max-w-full justify-center">
